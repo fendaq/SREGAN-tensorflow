@@ -21,99 +21,92 @@ super-resolution of images as described in:
 
 class EDSR(object):
 
-	def __init__(self, img_size=32, num_layers=32, feature_size=256, scale=2, output_channels=3):
+	def __init__(self, img_size=50, num_layers=32, feature_size=256, scale=2, output_channels=3):
 		print("Building EDSR...")
-		#Placeholder for image inputs
-		self.input = x = tf.placeholder(tf.float32, [None, img_size, img_size, output_channels])
-		#Placeholder for upscaled image ground-truth
-		self.target = y = tf.placeholder(tf.float32, [None, img_size * scale, img_size * scale, output_channels])
+		with tf.name_scope(name='image_input'):
+			self.input = x = tf.placeholder(tf.float32, [None, img_size, img_size, output_channels])
+			mean_x = tf.reduce_mean(x)
+			image_input = x - mean_x
+		with tf.name_scope(name='target_input'):
+			self.target = y = tf.placeholder(tf.float32, [None, img_size*scale, img_size*scale, output_channels])
+			mean_y = tf.reduce_mean(y)
+			image_target = y - mean_x
+
+
+		resnet_out = self.resnet(image_input, feature_size, num_layers, reuse=False, scope='_g')
+		self.debug = self.resnet(image_target, feature_size, num_layers, reuse=True, scope='_g')
+		g_output = self.upconv(resnet_out, scale, feature_size)
+
+		self.g_ini_out = output = g_output  # slim.conv2d(x,output_channels,[3,3])
+		self.g_ini_loss = g_ini_loss = tf.reduce_mean(tf.losses.absolute_difference(image_target, g_output))  # L1 loss
+
+		mse = tf.reduce_mean(tf.squared_difference(image_target, g_output))	
+		self.PSNR = PSNR = tf.constant(10,dtype=tf.float32)*utils.log10(tf.constant(255**2,dtype=tf.float32)/mse)
 	
-		"""
-		Preprocessing as mentioned in the paper, by subtracting the mean
-		However, the subtract the mean of the entire dataset they use. As of
-		now, I am subtracting the mean of each batch
-		"""
-		mean_x = tf.reduce_mean(self.input)
-		image_input = x - mean_x
-		mean_y = tf.reduce_mean(self.target)
-		image_target = y - mean_y
 
-		#One convolution before res blocks and to convert to required feature depth
-		x = slim.conv2d(image_input, feature_size, [3,3])
-	
-		#Store the output of the first convolution to add later
-		conv_1 = x	
-
-		"""
-		This creates `num_layers` number of resBlocks
-		a resBlock is defined in the paper as
-		(excuse the ugly ASCII graph)
-		x
-		|\
-		| \
-		|  conv2d
-		|  relu
-		|  conv2d
-		| /
-		|/
-		+ (addition here)
-		|
-		result
-		"""
-
-		"""
-		Doing scaling here as mentioned in the paper:
-
-		`we found that increasing the number of feature
-		maps above a certain level would make the training procedure
-		numerically unstable. A similar phenomenon was
-		reported by Szegedy et al. We resolve this issue by
-		adopting the residual scaling with factor 0.1. In each
-		residual block, constant scaling layers are placed after the
-		last convolution layers. These modules stabilize the training
-		procedure greatly when using a large number of filters.
-		In the test phase, this layer can be integrated into the previous
-		convolution layer for the computational efficiency.'
-
-		"""
-		scaling_factor = 0.1
+		# discriminator
+		d_resnet_fake = self.resnet(g_output, feature_size, num_layers, reuse=True, scope='_g')
+		d_logits_fake = self.classification(d_resnet_fake, feature_size, reuse=False)
+		# d_resnet_real.shape = (batchsize, 100, 100, 128)
+		self.d_resnet_real = d_resnet_real = self.resnet(image_target, feature_size, num_layers, reuse=True, scope='_g')
+		self.d_logits_real = d_logits_real = self.classification(d_resnet_real, feature_size, reuse=True)
 		
-		#Add the residual blocks to the model
-		for i in range(num_layers):
-			x = utils.resBlock(x, feature_size, scale=scaling_factor)
-
-		#One more convolution, and then we add the output of our first conv layer
-		x = slim.conv2d(x, feature_size, [3,3])
-		x += conv_1
-		self.resnet_out = x
+		d_loss1 = tf.losses.sigmoid_cross_entropy(d_logits_real, tf.ones_like(d_logits_real), scope='d1')
+		d_loss2 = tf.losses.sigmoid_cross_entropy(d_logits_fake, tf.zeros_like(d_logits_fake), scope='d2')
 		
-		#Upsample output of the convolution		
-		x = utils.upsample(x, scale, feature_size, None)
+		self.d_loss = d_loss1 + d_loss2
 
-		#One final convolution on the upsampling output
-		self.out = output = x  # slim.conv2d(x,output_channels,[3,3])
+		# generator
+		g_res_loss = 2e-6 * tf.reduce_mean(tf.squared_difference(d_resnet_real, d_resnet_fake))
+		g_gan_loss = 1e-3 * tf.losses.sigmoid_cross_entropy(d_logits_fake, tf.ones_like(d_logits_fake), scope='g')
+		self.g_loss = g_ini_loss + g_gan_loss + g_res_loss
 
-		self.loss = loss = tf.reduce_mean(tf.losses.absolute_difference(image_target, output))  # L1 loss
-	
-		#Calculating Peak Signal-to-noise-ratio
-		#Using equations from here: https://en.wikipedia.org/wiki/Peak_signal-to-noise_ratio
-		mse = tf.reduce_mean(tf.squared_difference(image_target,output))	
-		PSNR = tf.constant(255**2,dtype=tf.float32)/mse
-		PSNR = tf.constant(10,dtype=tf.float32)*utils.log10(PSNR)
-	
-		#Scalar to keep track for loss
-		tf.summary.scalar("loss",self.loss)
+		self.g_ini_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'resnet_g')+tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'upconv')
+		self.d_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'resnet_g')+tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'classification')
+		self.g_var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'resnet_g')+tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'upconv')
+
+		tf.summary.scalar("loss",self.g_ini_loss)
 		tf.summary.scalar("PSNR",PSNR)
-		#Image summaries for input, target, and output
 		tf.summary.image("input_image",self.input+mean_x)
 		tf.summary.image("target_image",self.target+mean_y)
-		tf.summary.image("output_image",self.out+mean_x)
+		tf.summary.image("output_image",self.g_ini_out+mean_x)
 		
-		#Tensorflow graph setup... session, saver, etc.
 		self.sess = tf.Session()
 		self.saver = tf.train.Saver()
 		print("Done building!")
-	
+
+
+	def resnet(self, image_input, feature_size, num_layers, scaling_factor=0.1, reuse=False, scope=''):
+		with tf.variable_scope("resnet"+scope, reuse=reuse) as vs:
+			x = slim.conv2d(image_input, feature_size, [3,3])
+		
+			conv_1 = x	
+			
+			for i in range(num_layers):
+				x = utils.resBlock(x, feature_size, scale=scaling_factor)
+			x = slim.conv2d(x, feature_size, [3,3])
+			x += conv_1
+		
+		return x
+
+
+	def upconv(self, x, scale, feature_size):
+		#Upsample output of the convolution		
+		with tf.variable_scope('upconv', reuse=False) as vs:
+			x = utils.upsample(x, scale, feature_size, None)
+		return x
+
+	def classification(self, image_input, feature_size, reuse=False):
+		with tf.variable_scope('calssification', reuse=reuse):
+			x = slim.max_pool2d(image_input, [2, 2])
+			x = slim.conv2d(x, feature_size*2, [3, 3])
+			x = slim.max_pool2d(x, [2, 2])
+			x = slim.conv2d(x, 1, [3, 3])
+			self.debug = x
+			x = tf.reduce_mean(x, axis=[1, 2])
+			x = tf.nn.softmax(x)
+		return x
+
 	"""
 	Save the current state of the network to file
 	"""
@@ -130,20 +123,7 @@ class EDSR(object):
 		self.saver.restore(self.sess,tf.train.latest_checkpoint(savedir))
 		print("Restored!")	
 
-	"""
-	Compute the output of this network given a specific input
 
-	x: a tensor of shape [n,image_w,image_h,image_channels] where n is the number of images you have
-
-	returns: a tensor of shape [n,image_width*2,img_height*2,channels] containing your super-resolution image(s)
-	"""
-	def predict(self,x):
-		print("Predicting...")
-		return self.sess.run(self.out,feed_dict={self.input:x})
-
-	"""
-	Function to setup your input data pipeline
-	"""
 	def set_data_fn(self, fn, args, test_set_fn=None, test_set_args=None):
 		self.data = fn
 		self.args = args
@@ -161,10 +141,11 @@ class EDSR(object):
 		os.mkdir(save_dir)
 		#Just a tf thing, to merge all summaries into one
 		merged = tf.summary.merge_all()
-		#Using adam optimizer as mentioned in the paper
-		optimizer = tf.train.AdamOptimizer()
-		#This is the train operation for our objective
-		train_op = optimizer.minimize(self.loss)	
+
+		train_op_g_ini = tf.train.AdamOptimizer().minimize(self.g_ini_loss, var_list=self.g_ini_var_list)
+		train_op_d = tf.train.AdamOptimizer().minimize(self.d_loss, var_list=self.d_var_list)
+		train_op_g = tf.train.AdamOptimizer().minimize(self.g_loss, var_list=self.g_var_list)
+
 		#Operation to initialize all variables
 		init = tf.global_variables_initializer()
 		print("Begin training...")
@@ -184,12 +165,12 @@ class EDSR(object):
 			#This is our training loop
 			for i in range(iterations):
 				#Use the data function we were passed to get a batch every iteration
-				x,y = self.data(*self.args)
+				x, y = self.data(*self.args)
 				#Create feed dictionary for the batch
-				feed = {self.input:x, self.target:y}
+				feed = {self.input: x, self.target: y}
 				#Run the train op and calculate the train summary
-				summary, _, img_tar = sess.run([merged,train_op, self.resnet_out],feed)
-				print(img_tar)
+				summary, _, loss = sess.run([merged, train_op_g_ini, self.g_ini_loss], feed)
+				print(loss)
 				#If we're testing, don't train on test set. But do calculate summary
 				if test_exists:
 					t_summary = sess.run(merged,test_feed)
@@ -197,5 +178,30 @@ class EDSR(object):
 					test_writer.add_summary(t_summary,i)
 				#Write train summary for this step
 				train_writer.add_summary(summary,i)
-			#Save our trained model		
-			self.save()		
+
+
+			for i in range(iterations*10):
+				#Use the data function we were passed to get a batch every iteration
+				x, y = self.data(*self.args)
+				#Create feed dictionary for the batch
+				feed = {self.input: x, self.target: y}
+				#Run the train op and calculate the train summary
+				summary, _, d_loss_evl, test = sess.run([merged,train_op_d, self.d_loss, self.debug],feed)
+				summary, _, g_loss_evl = sess.run([merged,train_op_g, self.g_loss],feed)
+
+				print(test.shape)
+				# print('d_loss:%f  g_loss:%f'%(d_loss_evl, g_loss_evl))
+				#If we're testing, don't train on test set. But do calculate summary
+				if test_exists:
+					t_summary = sess.run(merged,test_feed)
+					#Write test summary
+					test_writer.add_summary(t_summary,i+iterations)
+				#Write train summary for this step
+				train_writer.add_summary(summary,i+iterations)
+			# Save our trained model		
+			self.save()	
+
+
+	def predict(self,x):
+		print("Predicting...")
+		return self.sess.run([self.g_ini_out, self.PSNR],feed_dict={self.input:x})

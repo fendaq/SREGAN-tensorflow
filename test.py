@@ -8,14 +8,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset",default="/home/tengfei/Downloads/datasets/General-100")
 parser.add_argument("--imgsize",default=100,type=int)
 parser.add_argument("--scale",default=2,type=int)
-parser.add_argument("--layers",default=32,type=int)
-parser.add_argument("--featuresize",default=256,type=int)
-parser.add_argument("--batchsize",default=10,type=int)
-parser.add_argument("--savedir",default="saved_models")
-parser.add_argument("--iterations",default=1000,type=int)
+parser.add_argument("--layers",default=15,type=int)
+parser.add_argument("--featuresize",default=128,type=int)
+parser.add_argument("--batchsize",default=6,type=int)
+parser.add_argument("--savedir",default="saved_models-sharedresnet")
+parser.add_argument("--iterations",default=100,type=int)
 parser.add_argument("--numimgs",default=5,type=int)
 parser.add_argument("--outdir",default="out")
-parser.add_argument("--image")
+parser.add_argument("--image", default='/home/tengfei/Downloads/datasets/General-100/im_5.bmp')
 args = parser.parse_args()
 
 if not os.path.exists(args.outdir):
@@ -35,13 +35,14 @@ else:
 	x,y=data.get_batch(args.numimgs,args.imgsize,down_size)
 
 inputs = x
-outputs = network.predict(x)
+outputs, psnr = network.predict(x)
 correct = y
 
 if args.image:
-	scipy.misc.imsave(args.outdir+"/input_"+args.image,inputs[0])
-	scipy.misc.imsave(args.outdir+"/output_"+args.image,outputs[0])
-	scipy.misc.imsave(args.outdir+"/correct_"+args.image,correct[0])
+	scipy.misc.imsave(args.outdir+"/input_"+os.path.basename(args.image),inputs[0])
+	scipy.misc.imsave(args.outdir+"/output_"+os.path.basename(args.image),outputs[0])
+	scipy.misc.imsave(args.outdir+"/correct_"+os.path.basename(args.image),correct[0])
+	print(args.image,psnr)
 else:
 	for i in range(len(inputs)):
 		scipy.misc.imsave(args.outdir+"/input"+str(i)+".png",inputs[i])

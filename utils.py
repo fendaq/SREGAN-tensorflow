@@ -13,10 +13,10 @@ x: input to pass through the residual block
 channels: number of channels to compute
 stride: convolution stride
 """
-def resBlock(x,channels=64,kernel_size=[3,3],scale=1):
-	tmp = slim.conv2d(x,channels,kernel_size,activation_fn=None)
+def resBlock(x,channels=64,kernel_size=[3,3],scale=1, reuse=False):
+	tmp = slim.conv2d(x, channels, kernel_size, activation_fn=None, reuse=reuse)
 	tmp = tf.nn.relu(tmp)
-	tmp = slim.conv2d(tmp,channels,kernel_size,activation_fn=None)
+	tmp = slim.conv2d(tmp, channels, kernel_size, activation_fn=None, reuse=reuse)
 	tmp *= scale
 	return x + tmp
 

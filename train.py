@@ -11,11 +11,11 @@ def loadArgu():
     parser.add_argument("--dataset", default="/home/tengfei/Downloads/datasets/General-100")
     parser.add_argument("--imgsize", default=100, type=int)
     parser.add_argument("--scale", default=2, type=int)
-    parser.add_argument("--layers", default=32, type=int)
-    parser.add_argument("--featuresize", default=256, type=int)
-    parser.add_argument("--batchsize", default=10, type=int)
+    parser.add_argument("--layers", default=15, type=int)
+    parser.add_argument("--featuresize", default=128, type=int)
+    parser.add_argument("--batchsize", default=6, type=int)
     parser.add_argument("--savedir", default='saved_models')
-    parser.add_argument("--iterations", default=1000, type=int)
+    parser.add_argument("--iterations", default=100, type=int)
     args = parser.parse_args()
 
     return args
