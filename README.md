@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # EDSR Tensorflow Implementation
 An implementation of [Enhanced Deep Residual Networks for Single Image Super-Resolution](https://arxiv.org/pdf/1707.02921.pdf) written in tensorflow.
 
@@ -48,3 +49,6 @@ network was trained to scale 50x50px images to 100x100px for 1000 iterations. <b
 ## Future Work
 - Add MDSR implementation
 - Train and post results on a larger model and dataset
+=======
+# SREGAN-tensorflow
+>>>>>>> fbd8590c41f104004a2eb4ec842bd1e3c32ccf93
